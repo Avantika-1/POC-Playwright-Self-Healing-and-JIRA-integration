@@ -1,28 +1,26 @@
-import {Page, Locator} from '@playwright/test';
+import { Page, Locator } from '@playwright/test';
+import { clickWithSelfHealing } from '../helpers/selfHealer';
 
-export class LoginPage{
+export class LoginPage {
+    readonly page:          Page;
+    readonly usernameInput: Locator;
+    readonly passwordInput: Locator;
 
-    readonly page:Page;
-    readonly username:Locator;
-    readonly password:Locator;
-    readonly LoginButton:Locator;
-
-    constructor(page:Page) {
-
-        this.page = page;
-        this.username = page.locator('input[name="username"]')
-        this.password = page.locator('input[name = "password"]')
-        this.LoginButton = page.locator('button[type="submit"]')
+    constructor(page: Page) {
+        this.page          = page;
+        this.usernameInput = page.locator('input[name="username"]');
+        this.passwordInput = page.locator('input[name="password"]');
     }
 
-    async goto() {
+    async goto(): Promise<void> {
         await this.page.goto('/web/index.php/auth/login');
     }
 
-    async login(user:string, pass:string){
-        await this.username.fill(user);
-        await this.password.fill(pass);
-        await this.LoginButton.click();
+    async login(username: string, password: string): Promise<void> {
+        await this.usernameInput.fill(username);
+        await this.passwordInput.fill(password);
+        // Self-healing on submit: primary is the exact selector, hint drives DOM fallback
+        await clickWithSelfHealing(this.page, 'button[type="submit"]', 'Login');
         await this.page.waitForURL('**/dashboard/index');
     }
 }

@@ -1,57 +1,56 @@
 import { test, expect } from '@playwright/test';
-import { LoginPage } from '../pages/LoginPage';
+import { LoginPage }     from '../pages/LoginPage';
 import { DashboardPage } from '../pages/DashboardPage';
-import { PimPage } from '../pages/PimPage';
-import { clickWithSelfHealing } from '../helpers/selfHealer';
+import { PimPage }       from '../pages/PimPage';
 import { logJiraBugViaMCP } from '../helpers/jiraMcpLogger';
 
-test('OrangeHRM Visual & Self-Healing E2E Workflow (POM)', async ({ page }) => {
-    // 1. Initialize Page Classes
-    const loginPage = new LoginPage(page);
-    const dashboardPage = new DashboardPage(page);
-    const pimPage = new PimPage(page);
+test('OrangeHRM — Self-Healing + Jira Auto-Logging E2E Demo', async ({ page }) => {
 
-    // 2. Perform UI Login via POM
+    const loginPage     = new LoginPage(page);
+    const dashboardPage = new DashboardPage(page);
+    const pimPage       = new PimPage(page);
+
+    // ── Step 1: Login ────────────────────────────────────────────────────────
     await loginPage.goto();
     await loginPage.login('Admin', 'admin123');
 
-    // 3. Verify Dashboard Access
+    // ── Step 2: Verify Dashboard chart loads ─────────────────────────────────
     await dashboardPage.waitForChartLoad();
 
-    // 4. Self-Healing Navigation
-    const brokenPrimaryLink = 'a[href*="pim/invalid_broken_link"]';
-    const validFallbackLink = 'a[href*="viewPimModule"]';
+    // ── Step 3: Self-Healing Navigation Demo ─────────────────────────────────
+    // Primary selector 'a[href*="broken_pim"]' will fail intentionally.
+    // Healer dynamically finds a:has-text("PIM") from the DOM and recovers.
+    await dashboardPage.navigateToPIM();
 
-    await clickWithSelfHealing(
-        page, 
-        brokenPrimaryLink, 
-        validFallbackLink, 
-        'PIM Navigation Menu Link'
-    );
+    // ── Step 4: Add Employee via PIM ─────────────────────────────────────────
+    await pimPage.addNewEmployee('Automation', 'SDET');
+    await pimPage.verifyEmployeeCreated('Automation', 'SDET');
 
-    // 5. Add Employee via POM
-    await pimPage.addNewEmployee('Automation', 'TS_SDET');
-
-    // 6. Return to Dashboard & Assert Visual Baseline
+    // ── Step 5: Return to Dashboard for Visual Regression ────────────────────
     await dashboardPage.goto();
     await dashboardPage.waitForChartLoad();
 
-    // [INTENTIONAL FAILURE] Forced visual diff to demonstrate Jira auto-logging
-    // Uses a mismatched baseline to guarantee a visual failure every run
+    // ── Step 6: Visual Regression — Intentional failure to demo Jira logging ─
+    // Baseline captured before employee add; chart data changes after add,
+    // guaranteeing a pixel diff on every run to trigger Jira auto-logging.
     try {
-        await expect(dashboardPage.chartWidget).toHaveScreenshot('dashboard-chart-baseline.png', {
-            maxDiffPixels: 0,
-            threshold: 0,
-            animations: 'disabled'
-        });
-        console.log('[SUCCESS] Visual snapshot matched baseline!');
+        await expect(dashboardPage.chartWidget).toHaveScreenshot(
+            'dashboard-chart-baseline.png',
+            { maxDiffPixels: 0, threshold: 0, animations: 'disabled' }
+        );
+        console.log('[VISUAL] Snapshot matched baseline — no regression detected.');
     } catch (visualError: any) {
-        console.error('[VISUAL BUG DETECTED] Snapshot mismatch found. Logging bug to Jira...');
+        console.error('[VISUAL REGRESSION] Pixel diff detected. Logging bug to Jira...');
         await logJiraBugViaMCP({
-            summary: '[Visual Regression] Dashboard Chart mismatch after employee add',
-            description: `Visual regression detected in E2E workflow.\n\nURL: ${page.url()}\nStep: After adding new employee via PIM\nReason: Pixel diff exceeded threshold (maxDiffPixels=0)\n\nError: ${visualError.message}`
+            summary: '[Visual Regression] Dashboard chart changed after employee creation',
+            description: [
+                `Step: Visual baseline comparison post employee add`,
+                `URL: ${page.url()}`,
+                `Reason: Pixel diff exceeded threshold (maxDiffPixels=0, threshold=0)`,
+                `Error: ${visualError.message}`,
+            ].join('\n'),
         });
-        console.log('[JIRA] Bug logged. Re-throwing to mark test as FAILED.');
+        console.log('[JIRA] Bug logged successfully. Failing test.');
         throw visualError;
     }
 });

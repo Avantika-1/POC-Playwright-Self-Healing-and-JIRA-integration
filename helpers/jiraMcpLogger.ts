@@ -6,51 +6,49 @@ interface JiraIssuePayload {
     summary: string;
     description: string;
     projectKey?: string;
-    issueType?: string;
 }
 
-export async function logJiraBugViaMCP(issueDetails: JiraIssuePayload) {
-    const jiraDomain = process.env.JIRA_DOMAIN;
-    const jiraEmail = process.env.JIRA_EMAIL;
-    const jiraApiToken = process.env.JIRA_API_TOKEN;
-    const projectKey = issueDetails.projectKey || process.env.JIRA_PROJECT_KEY || 'AR';
+export async function logJiraBugViaMCP(payload: JiraIssuePayload): Promise<void> {
+    const domain    = process.env.JIRA_DOMAIN;
+    const email     = process.env.JIRA_EMAIL;
+    const token     = process.env.JIRA_API_TOKEN;
+    const projectKey = payload.projectKey ?? process.env.JIRA_PROJECT_KEY ?? 'AR';
 
-    if (!jiraDomain || !jiraEmail || !jiraApiToken) {
-        console.error('[JIRA ERROR] Missing JIRA_DOMAIN, JIRA_EMAIL or JIRA_API_TOKEN in .env');
+    if (!domain || !email || !token) {
+        console.error('[JIRA ERROR] Missing JIRA_DOMAIN, JIRA_EMAIL or JIRA_API_TOKEN in .env — skipping Jira log.');
         return;
     }
 
-    const url = `https://${jiraDomain}/rest/api/3/issue`;
-    const authHeader = Buffer.from(`${jiraEmail}:${jiraApiToken}`).toString('base64');
-
-    const bodyData = {
+    const adfBody = {
         fields: {
-            project: { key: projectKey },
-            summary: issueDetails.summary,
+            project:     { key: projectKey },
+            summary:     payload.summary,
+            issuetype:   { name: 'Bug' },
             description: {
                 type: 'doc',
                 version: 1,
-                content: [
-                    {
-                        type: 'paragraph',
-                        content: [{ type: 'text', text: issueDetails.description }]
-                    }
-                ]
+                content: [{
+                    type: 'paragraph',
+                    content: [{ type: 'text', text: payload.description }],
+                }],
             },
-            issuetype: { name: 'Bug' }
-        }
+        },
     };
 
     try {
-        const response = await axios.post(url, bodyData, {
-            headers: {
-                'Authorization': `Basic ${authHeader}`,
-                'Accept': 'application/json',
-                'Content-Type': 'application/json'
+        const response = await axios.post(
+            `https://${domain}/rest/api/3/issue`,
+            adfBody,
+            {
+                headers: {
+                    Authorization: `Basic ${Buffer.from(`${email}:${token}`).toString('base64')}`,
+                    Accept:        'application/json',
+                    'Content-Type': 'application/json',
+                },
             }
-        });
-        console.log(`[JIRA SUCCESS] Real Jira Bug Created Successfully! Issue Key: ${response.data.key}`);
+        );
+        console.log(`[JIRA SUCCESS] Bug created: ${response.data.key} — ${payload.summary}`);
     } catch (error: any) {
-        console.error('[JIRA ERROR] Failed to log issue to Jira:', error.response?.data || error.message);
+        console.error('[JIRA ERROR] Failed to create issue:', error.response?.data ?? error.message);
     }
 }
