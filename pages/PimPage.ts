@@ -17,24 +17,29 @@ export class PimPage {
     async addNewEmployee(firstName: string, lastName: string): Promise<void> {
         await this.addButton.click();
 
-        // Wait for add-employee form to be ready
-        await this.page.locator('.oxd-form-loader').waitFor({ state: 'detached', timeout: 10000 }).catch(() => {});
-        await this.firstNameInput.waitFor({ state: 'visible' });
+        const loaderAppeared = await this.page.locator('.oxd-form-loader')
+            .waitFor({ state: 'visible', timeout: 3000 })
+            .then(() => true)
+            .catch(() => false);
 
+        if (loaderAppeared) {
+            await this.page.locator('.oxd-form-loader').waitFor({ state: 'detached', timeout: 10000 });
+        } else {
+            console.log('[PIM] Form loader did not appear — form likely rendered immediately.');
+        }
+
+        await this.firstNameInput.waitFor({ state: 'visible' });
         await this.firstNameInput.fill(firstName);
         await this.lastNameInput.fill(lastName);
 
-        // Self-healing save: primary is submit type, hint drives DOM fallback
         await clickWithSelfHealing(this.page, 'button[type="submit"]', 'Save');
-
-        await this.page.waitForLoadState('networkidle').catch(() => {});
+        await this.page.waitForURL('**/pim/viewPersonalDetails/**', { timeout: 15000 });
         console.log(`[PIM] Employee '${firstName} ${lastName}' saved.`);
     }
 
     async verifyEmployeeCreated(firstName: string, lastName: string): Promise<void> {
-        // After save, OrangeHRM redirects to the employee profile — verify name fields are populated
         await expect(this.firstNameInput).toHaveValue(firstName, { timeout: 10000 });
         await expect(this.lastNameInput).toHaveValue(lastName);
-        console.log(`[PIM] Verified employee '${firstName} ${lastName}' was created successfully.`);
+        console.log(`[PIM] Verified: '${firstName} ${lastName}' profile loaded correctly.`);
     }
 }

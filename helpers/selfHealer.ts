@@ -1,13 +1,18 @@
 import { Page } from '@playwright/test';
-import { logJiraBugViaMCP } from './jiraMcpLogger';
+import { logJiraBug } from './jiraRestLogger';
 
-// DOM-based candidate strategies derived from elementHint at runtime
+// Escape double-quotes in hint so interpolated selectors don't break
+function escapeHint(hint: string): string {
+    return hint.replace(/"/g, '\\"');
+}
+
 function buildHealingCandidates(hint: string): string[] {
+    const h = escapeHint(hint);
     return [
-        `a:has-text("${hint}")`,
-        `button:has-text("${hint}")`,
-        `[aria-label="${hint}"]`,
-        `input[placeholder="${hint}"]`,
+        `a:has-text("${h}")`,
+        `button:has-text("${h}")`,
+        `[aria-label="${h}"]`,
+        `input[placeholder="${h}"]`,
     ];
 }
 
@@ -22,42 +27,51 @@ export async function clickWithSelfHealing(
         console.log(`[PRIMARY] Clicked '${elementHint}' via primary selector.`);
         return;
     } catch {
-        console.warn(`[HEALING] Primary selector failed for '${elementHint}'. Starting DOM-based self-healing...`);
+        console.warn(`[HEALING] Primary failed for '${elementHint}'. Starting DOM-based self-healing...`);
     }
 
-    // Step 2: Dynamic DOM healing — try each candidate derived from elementHint
+    // Step 2: Try each DOM candidate — waitFor visible handles timing, no count() pre-check
     const candidates = buildHealingCandidates(elementHint);
     for (const candidate of candidates) {
         try {
-            // Wait for at least one match to exist in DOM before attempting click
-            const count = await page.locator(candidate).count();
-            console.log(`[HEALING] Trying: ${candidate} (found ${count} element(s) in DOM)`);
-            if (count === 0) {
-                console.warn(`[HEALING] Skipped (not in DOM): ${candidate}`);
-                continue;
-            }
+            console.log(`[HEALING] Trying candidate: ${candidate}`);
             await page.locator(candidate).first().waitFor({ state: 'visible', timeout: 5000 });
             await page.locator(candidate).first().click({ timeout: 5000 });
-            console.log(`[HEALED] '${elementHint}' recovered using dynamic selector: ${candidate}`);
+            console.log(`[HEALED] '${elementHint}' recovered via: ${candidate}`);
+
+            // Log a warning to Jira — primary selector is drifting, needs attention before it fully breaks
+            await logJiraBug({
+                summary: `[DOM Drift Warning] Primary selector for '${elementHint}' required self-healing`,
+                description: [
+                    `Element: ${elementHint}`,
+                    `Broken Primary: ${primarySelector}`,
+                    `Recovered Via: ${candidate}`,
+                    `Page URL: ${page.url()}`,
+                    `Action Required: Update primary selector before it causes a full failure.`,
+                ].join('\n'),
+                labels: ['dom-drift', 'self-healed', 'automation'],
+            });
             return;
         } catch (e: any) {
-            console.warn(`[HEALING] Candidate failed: ${candidate} — ${e.message?.split('\n')[0]}`);
+            console.warn(`[HEALING] Failed: ${candidate} — ${e.message?.split('\n')[0]}`);
         }
     }
 
-    // Step 3: All strategies exhausted — log to Jira and fail the test
-    const errorMessage = `Self-healing exhausted all DOM strategies for '${elementHint}'.`;
-    console.error(`[SELF-HEAL FAILED] ${errorMessage} Logging to Jira...`);
+    // Step 3: All strategies exhausted — log critical bug to Jira and fail
+    const errorMsg = `Self-healing exhausted all DOM strategies for '${elementHint}'.`;
+    console.error(`[SELF-HEAL FAILED] ${errorMsg}`);
 
-    await logJiraBugViaMCP({
-        summary: `[Self-Heal Failure] Element '${elementHint}' not found via any DOM strategy`,
+    await logJiraBug({
+        summary: `[Self-Heal Failure] '${elementHint}' unreachable via any DOM strategy`,
         description: [
-            `Element Hint: ${elementHint}`,
+            `Element: ${elementHint}`,
             `Primary Selector: ${primarySelector}`,
-            `Healing Candidates Tried:\n${candidates.map(c => `  - ${c}`).join('\n')}`,
+            `Candidates Tried:`,
+            ...candidates.map(c => `  - ${c}`),
             `Page URL: ${page.url()}`,
-        ].join('\n\n'),
+        ].join('\n'),
+        labels: ['self-heal-failure', 'automation', 'critical'],
     });
 
-    throw new Error(`[SELF-HEAL FAILED] ${errorMessage}`);
+    throw new Error(`[SELF-HEAL FAILED] ${errorMsg}`);
 }

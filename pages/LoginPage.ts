@@ -16,11 +16,13 @@ export class LoginPage {
         await this.page.goto('/web/index.php/auth/login');
     }
 
-    async login(username: string, password: string): Promise<void> {
+    async login(
+        username = process.env.OHR_USERNAME ?? 'Admin',
+        password = process.env.OHR_PASSWORD ?? 'admin123'
+    ): Promise<void> {
         await this.usernameInput.fill(username);
         await this.passwordInput.fill(password);
-        // Self-healing on submit: primary is the exact selector, hint drives DOM fallback
         await clickWithSelfHealing(this.page, 'button[type="submit"]', 'Login');
-        await this.page.waitForURL('**/dashboard/index');
+        await this.page.waitForURL('**/dashboard/index', { timeout: 15000 });
     }
 }

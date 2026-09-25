@@ -1,56 +1,89 @@
-import { test, expect } from '@playwright/test';
-import { LoginPage }     from '../pages/LoginPage';
-import { DashboardPage } from '../pages/DashboardPage';
-import { PimPage }       from '../pages/PimPage';
-import { logJiraBugViaMCP } from '../helpers/jiraMcpLogger';
+import { test, expect }        from '@playwright/test';
+import { LoginPage }            from '../pages/LoginPage';
+import { DashboardPage }        from '../pages/DashboardPage';
+import { PimPage }              from '../pages/PimPage';
+import { logJiraBug }           from '../helpers/jiraRestLogger';
+import { generateEmployeeData } from '../helpers/dataGenerator';
 
-test('OrangeHRM — Self-Healing + Jira Auto-Logging E2E Demo', async ({ page }) => {
+test.describe('OrangeHRM E2E Demo @demo', () => {
 
-    const loginPage     = new LoginPage(page);
-    const dashboardPage = new DashboardPage(page);
-    const pimPage       = new PimPage(page);
+    // ── Test 1: Self-Healing Navigation ──────────────────────────────────────
+    test('Self-Healing — PIM navigation recovers from broken selector', async ({ page }) => {
+        const loginPage     = new LoginPage(page);
+        const dashboardPage = new DashboardPage(page);
+        const pimPage       = new PimPage(page);
+        const employee      = generateEmployeeData();
 
-    // ── Step 1: Login ────────────────────────────────────────────────────────
-    await loginPage.goto();
-    await loginPage.login('Admin', 'admin123');
+        console.log(`[DATA] Generated employee: ${employee.fullName} (runId: ${employee.runId})`);
 
-    // ── Step 2: Verify Dashboard chart loads ─────────────────────────────────
-    await dashboardPage.waitForChartLoad();
+        await loginPage.goto();
+        await loginPage.login();
+        await dashboardPage.waitForChartLoad();
 
-    // ── Step 3: Self-Healing Navigation Demo ─────────────────────────────────
-    // Primary selector 'a[href*="broken_pim"]' will fail intentionally.
-    // Healer dynamically finds a:has-text("PIM") from the DOM and recovers.
-    await dashboardPage.navigateToPIM();
+        // navigateToPIM uses intentionally broken primary — healer recovers via hint 'PIM'
+        await dashboardPage.navigateToPIM();
+        await pimPage.addNewEmployee(employee.firstName, employee.lastName);
 
-    // ── Step 4: Add Employee via PIM ─────────────────────────────────────────
-    await pimPage.addNewEmployee('Automation', 'SDET');
-    await pimPage.verifyEmployeeCreated('Automation', 'SDET');
+        try {
+            await pimPage.verifyEmployeeCreated(employee.firstName, employee.lastName);
+        } catch (e: any) {
+            await logJiraBug({
+                summary: '[Functional Bug] Employee creation verification failed',
+                description: [
+                    `Step: Verify employee profile after save`,
+                    `URL: ${page.url()}`,
+                    `Employee: ${employee.fullName} (runId: ${employee.runId})`,
+                    `Error: ${e.message}`,
+                ].join('\n'),
+                labels: ['functional', 'pim', 'automation'],
+            });
+            throw e;
+        }
+    });
 
-    // ── Step 5: Return to Dashboard for Visual Regression ────────────────────
-    await dashboardPage.goto();
-    await dashboardPage.waitForChartLoad();
+    // ── Test 2: Visual Regression → Jira Auto-Logging ────────────────────────
+    // IMPORTANT: Baseline PNG must be committed to source control.
+    // To regenerate: npx playwright test --project=demo --update-snapshots
+    // Excluded from default CI gate — run explicitly: npx playwright test --project=demo
+    test('Visual Regression — chart diff triggers Jira auto-logging @demo', async ({ page }) => {
+        const loginPage     = new LoginPage(page);
+        const dashboardPage = new DashboardPage(page);
+        const pimPage       = new PimPage(page);
+        const employee      = generateEmployeeData();
 
-    // ── Step 6: Visual Regression — Intentional failure to demo Jira logging ─
-    // Baseline captured before employee add; chart data changes after add,
-    // guaranteeing a pixel diff on every run to trigger Jira auto-logging.
-    try {
-        await expect(dashboardPage.chartWidget).toHaveScreenshot(
-            'dashboard-chart-baseline.png',
-            { maxDiffPixels: 0, threshold: 0, animations: 'disabled' }
-        );
-        console.log('[VISUAL] Snapshot matched baseline — no regression detected.');
-    } catch (visualError: any) {
-        console.error('[VISUAL REGRESSION] Pixel diff detected. Logging bug to Jira...');
-        await logJiraBugViaMCP({
-            summary: '[Visual Regression] Dashboard chart changed after employee creation',
-            description: [
-                `Step: Visual baseline comparison post employee add`,
-                `URL: ${page.url()}`,
-                `Reason: Pixel diff exceeded threshold (maxDiffPixels=0, threshold=0)`,
-                `Error: ${visualError.message}`,
-            ].join('\n'),
-        });
-        console.log('[JIRA] Bug logged successfully. Failing test.');
-        throw visualError;
-    }
+        console.log(`[DATA] Generated employee: ${employee.fullName} (runId: ${employee.runId})`);
+
+        await loginPage.goto();
+        await loginPage.login();
+        await dashboardPage.waitForChartLoad();
+        await dashboardPage.navigateToPIM();
+        await pimPage.addNewEmployee(employee.firstName, employee.lastName);
+        await pimPage.verifyEmployeeCreated(employee.firstName, employee.lastName);
+
+        await dashboardPage.goto();
+        await dashboardPage.waitForChartLoad();
+
+        try {
+            await expect(dashboardPage.chartWidget).toHaveScreenshot(
+                'dashboard-chart-baseline.png',
+                { maxDiffPixels: 0, threshold: 0, animations: 'disabled' }
+            );
+            console.log('[VISUAL] Snapshot matched — no regression.');
+        } catch (visualError: any) {
+            console.error('[VISUAL REGRESSION] Diff detected. Logging to Jira...');
+            await logJiraBug({
+                summary: '[Visual Regression] Dashboard chart changed after employee creation',
+                description: [
+                    `Step: Visual baseline comparison post employee add`,
+                    `URL: ${page.url()}`,
+                    `Employee Added: ${employee.fullName} (runId: ${employee.runId})`,
+                    `Reason: Pixel diff exceeded threshold (maxDiffPixels=0, threshold=0)`,
+                    `Error: ${visualError.message}`,
+                ].join('\n'),
+                labels: ['visual-regression', 'dashboard', 'automation'],
+            });
+            console.log('[JIRA] Bug logged. Failing test.');
+            throw visualError;
+        }
+    });
 });
